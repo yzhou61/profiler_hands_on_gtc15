@@ -1,0 +1,112 @@
+--- stencil4_fp.cu	2015-03-16 16:50:11.253540051 -0700
++++ stencil5_overlap.cu	2015-03-16 16:50:14.237540057 -0700
+@@ -17,6 +17,9 @@
+ 
+ #define BLOCK_SIZE (128)
+ 
++#define NUM_CHUNKS (16)
++#define NUM_STREAMS (4)
++
+ // Given the pixel index and channel, return the position of the
+ // element in the 1D array.
+ static __device__ __host__ int getIndex(int index, int channel)
+@@ -38,6 +41,10 @@
+     float sum[NUM_CHANNELS] = { .0f };
+     extern __shared__ unsigned char inShared[];
+ 
++    if (i >= numPixels) {
++        return;
++    }
++
+     *((int *)&inShared[getIndex(threadIdx.x + RADIUS, 0)]) = *((int *)&in[getIndex(i, 0)]);
+     if (threadIdx.x < RADIUS && i >= RADIUS) {
+         *((int *)&inShared[getIndex(threadIdx.x, 0)]) = *((int *)&in[getIndex(i - RADIUS, 0)]);
+@@ -72,25 +79,52 @@
+                        int numPixels,
+                        unsigned char *out)
+ {
+-    unsigned char *inGPU;
+-    unsigned char *outGPU;
+-    size_t arraySize;
++    int i = 0, s;
++    unsigned char *inGPU[NUM_STREAMS];
++    unsigned char *outGPU[NUM_STREAMS];
++    size_t arraySize, chunkSize, chunkSize2, startIndex, endIndex;
++    cudaStream_t streams[NUM_STREAMS];
++
++    chunkSize = (numPixels - RADIUS) / NUM_CHUNKS + 1;
++    chunkSize2 = chunkSize + 2 * RADIUS;
++    arraySize = (chunkSize2) * NUM_CHANNELS * sizeof(unsigned char);
++
++    for (s = 0; s < NUM_STREAMS; ++s) {
++        CUDA_CALL(cudaStreamCreate(&streams[s]));
++        CUDA_CALL(cudaMalloc(&inGPU[s], arraySize));
++        CUDA_CALL(cudaMalloc(&outGPU[s], arraySize));
++    }
++
++    startIndex = RADIUS;
++
++    do {
++        endIndex = startIndex + chunkSize;
++        if (endIndex > numPixels - RADIUS) {
++            endIndex = numPixels - RADIUS;
++            chunkSize = endIndex - startIndex;
++            chunkSize2 = chunkSize + 2 * RADIUS;
++            arraySize = (chunkSize2) * NUM_CHANNELS * sizeof(unsigned char);
++        }
+ 
+-    arraySize = numPixels * NUM_CHANNELS * sizeof(unsigned char);
++        CUDA_CALL(cudaMemcpyAsync(inGPU[i % NUM_STREAMS] + getIndex(0, 0), in + getIndex(startIndex - RADIUS, 0), chunkSize2 * sizeof(unsigned char) * NUM_CHANNELS, cudaMemcpyHostToDevice, streams[i % NUM_STREAMS]));
+ 
+-    CUDA_CALL(cudaMalloc(&inGPU, arraySize));
+-    CUDA_CALL(cudaMalloc(&outGPU, arraySize));
++        stencilKernel<<<ceil((float)chunkSize2 / BLOCK_SIZE), BLOCK_SIZE, (BLOCK_SIZE + 2 * RADIUS) * NUM_CHANNELS * sizeof(unsigned char), streams[i % NUM_STREAMS]>>>(inGPU[i % NUM_STREAMS], chunkSize2, outGPU[i % NUM_STREAMS]);
++        CUDA_CALL(cudaGetLastError());
+ 
+-    CUDA_CALL(cudaMemcpy(inGPU, in, arraySize, cudaMemcpyHostToDevice));
++        CUDA_CALL(cudaMemcpyAsync(out + getIndex(startIndex, 0), outGPU[i % NUM_STREAMS] + getIndex(RADIUS, 0), chunkSize * sizeof(unsigned char) * NUM_CHANNELS, cudaMemcpyDeviceToHost, streams[i % NUM_STREAMS]));
+ 
+-    stencilKernel<<<ceil((float)numPixels / BLOCK_SIZE), BLOCK_SIZE, (BLOCK_SIZE + 2 * RADIUS) * NUM_CHANNELS * sizeof(unsigned char)>>>(inGPU, numPixels, outGPU);
+-    CUDA_CALL(cudaGetLastError());
+-    CUDA_CALL(cudaDeviceSynchronize());
++        startIndex += chunkSize;
++
++        ++i;
++    } while (startIndex < numPixels - RADIUS);
+ 
+-    CUDA_CALL(cudaMemcpy(out, outGPU, arraySize, cudaMemcpyDeviceToHost));
++    CUDA_CALL(cudaDeviceSynchronize());
+ 
+-    CUDA_CALL(cudaFree(inGPU));
+-    CUDA_CALL(cudaFree(outGPU));
++    for (s = 0; s < NUM_STREAMS; ++s) {
++        CUDA_CALL(cudaFree(inGPU[s]));
++        CUDA_CALL(cudaFree(outGPU[s]));
++        CUDA_CALL(cudaStreamDestroy(streams[s]));
++    }
+ }
+ 
+ int main()
+@@ -99,8 +133,9 @@
+     unsigned char *outGPU;
+     size_t arraySize = STENCIL_SIZE * NUM_CHANNELS * sizeof(unsigned char);
+ 
+-    in = (unsigned char *)malloc(arraySize);
+-    outGPU = (unsigned char *)malloc(arraySize);
++    CUDA_CALL(cudaMallocHost(&in, arraySize));
++    CUDA_CALL(cudaMallocHost(&outGPU, arraySize));
++
+     if (in == NULL || outGPU == NULL) {
+         fprintf(stderr, "Allocation failed\n");
+         exit(EXIT_FAILURE);
+@@ -108,8 +143,8 @@
+ 
+     stencilGpu(in, STENCIL_SIZE, outGPU);
+ 
+-    free(in);
+-    free(outGPU);
++    CUDA_CALL(cudaFreeHost(in));
++    CUDA_CALL(cudaFreeHost(outGPU));
+ 
+     return 0;
+ }

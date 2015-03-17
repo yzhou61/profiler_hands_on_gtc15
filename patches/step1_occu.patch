@@ -1,0 +1,11 @@
+--- stencil0_orig.cu	2015-03-16 16:43:31.157539225 -0700
++++ stencil1_occu.cu	2015-03-16 16:50:02.225540032 -0700
+@@ -15,7 +15,7 @@
+ #define RADIUS (3)
+ #define NUM_CHANNELS (4)
+ 
+-#define BLOCK_SIZE (32)
++#define BLOCK_SIZE (128)
+ 
+ // Given the pixel index and channel, return the position of the
+ // element in the 1D array.

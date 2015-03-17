@@ -1,0 +1,39 @@
+--- stencil3_coalesce.cu	2015-03-16 16:50:08.253540045 -0700
++++ stencil4_fp.cu	2015-03-16 16:50:11.253540051 -0700
+@@ -24,10 +24,9 @@
+     return index * NUM_CHANNELS + channel;
+ }
+ 
+-static __constant__ int weight[RADIUS * 2 + 1] = {
+-    1, 2, 3, 4, 3, 2, 1
++static __constant__ float weight[RADIUS * 2 + 1] = {
++    .0625, .125, .1875, .25, .1875, .125, .0625
+ };
+-static __constant__ int denominator = 16;
+ 
+ __global__ void stencilKernel(unsigned char *in,
+                               int numPixels,
+@@ -36,7 +35,7 @@
+     int i = blockIdx.x * blockDim.x + threadIdx.x;
+     int radius, channel;
+     unsigned char outLocal[NUM_CHANNELS] = { 0 };
+-    int sum[NUM_CHANNELS] = { 0 };
++    float sum[NUM_CHANNELS] = { .0f };
+     extern __shared__ unsigned char inShared[];
+ 
+     *((int *)&inShared[getIndex(threadIdx.x + RADIUS, 0)]) = *((int *)&in[getIndex(i, 0)]);
+@@ -58,12 +57,12 @@
+ 
+     for (radius = -RADIUS; radius <= RADIUS; ++radius) {
+         for (channel = 0; channel < NUM_CHANNELS; ++channel) {
+-            sum[channel] += (int)inShared[getIndex(threadIdx.x + RADIUS + radius, channel)] * weight[RADIUS + radius];
++            sum[channel] += (float)inShared[getIndex(threadIdx.x + RADIUS + radius, channel)] * weight[RADIUS + radius];
+         }
+     }
+ 
+     for (channel = 0; channel < NUM_CHANNELS; ++channel) {
+-        outLocal[channel] = (unsigned char)(sum[channel] / denominator);
++        outLocal[channel] = (unsigned char)sum[channel];
+     }
+ 
+     *((int *)&out[getIndex(i, 0)]) = *((int *)&outLocal);

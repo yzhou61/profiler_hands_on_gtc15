@@ -1,0 +1,39 @@
+--- stencil1_occu.cu	2015-03-16 16:50:02.225540032 -0700
++++ stencil2_shm.cu	2015-03-16 16:50:05.221540038 -0700
+@@ -36,6 +36,18 @@
+     int i = blockIdx.x * blockDim.x + threadIdx.x;
+     int radius, channel;
+     int outLocal[NUM_CHANNELS] = { 0 };
++    extern __shared__ unsigned char inShared[];
++
++    for (channel = 0; channel < NUM_CHANNELS; ++channel) {
++        inShared[getIndex(threadIdx.x + RADIUS, channel)] = in[getIndex(i, channel)];
++        if (threadIdx.x < RADIUS && i >= RADIUS) {
++            inShared[getIndex(threadIdx.x, channel)] = in[getIndex(i - RADIUS, channel)];
++        }
++        if (threadIdx.x >= blockDim.x - RADIUS && i < numPixels - RADIUS) {
++            inShared[getIndex(threadIdx.x + 2 * RADIUS, channel)] = in[getIndex(i + RADIUS, channel)];
++        }
++    }
++    __syncthreads();
+ 
+     if (i < RADIUS) {
+         return;
+@@ -47,7 +59,7 @@
+ 
+     for (radius = -RADIUS; radius <= RADIUS; ++radius) {
+         for (channel = 0; channel < NUM_CHANNELS; ++channel) {
+-            outLocal[channel] += (int)in[getIndex(i + radius, channel)] * weight[RADIUS + radius];
++            outLocal[channel] += (int)inShared[getIndex(threadIdx.x + RADIUS + radius, channel)] * weight[RADIUS + radius];
+         }
+     }
+ 
+@@ -71,7 +83,7 @@
+ 
+     CUDA_CALL(cudaMemcpy(inGPU, in, arraySize, cudaMemcpyHostToDevice));
+ 
+-    stencilKernel<<<ceil((float)numPixels / BLOCK_SIZE), BLOCK_SIZE>>>(inGPU, numPixels, outGPU);
++    stencilKernel<<<ceil((float)numPixels / BLOCK_SIZE), BLOCK_SIZE, (BLOCK_SIZE + 2 * RADIUS) * NUM_CHANNELS * sizeof(unsigned char)>>>(inGPU, numPixels, outGPU);
+     CUDA_CALL(cudaGetLastError());
+     CUDA_CALL(cudaDeviceSynchronize());
+ 

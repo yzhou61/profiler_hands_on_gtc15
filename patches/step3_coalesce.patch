@@ -1,0 +1,46 @@
+--- stencil2_shm.cu	2015-03-16 16:50:05.221540038 -0700
++++ stencil3_coalesce.cu	2015-03-16 16:50:08.253540045 -0700
+@@ -35,17 +35,16 @@
+ {
+     int i = blockIdx.x * blockDim.x + threadIdx.x;
+     int radius, channel;
+-    int outLocal[NUM_CHANNELS] = { 0 };
++    unsigned char outLocal[NUM_CHANNELS] = { 0 };
++    int sum[NUM_CHANNELS] = { 0 };
+     extern __shared__ unsigned char inShared[];
+ 
+-    for (channel = 0; channel < NUM_CHANNELS; ++channel) {
+-        inShared[getIndex(threadIdx.x + RADIUS, channel)] = in[getIndex(i, channel)];
+-        if (threadIdx.x < RADIUS && i >= RADIUS) {
+-            inShared[getIndex(threadIdx.x, channel)] = in[getIndex(i - RADIUS, channel)];
+-        }
+-        if (threadIdx.x >= blockDim.x - RADIUS && i < numPixels - RADIUS) {
+-            inShared[getIndex(threadIdx.x + 2 * RADIUS, channel)] = in[getIndex(i + RADIUS, channel)];
+-        }
++    *((int *)&inShared[getIndex(threadIdx.x + RADIUS, 0)]) = *((int *)&in[getIndex(i, 0)]);
++    if (threadIdx.x < RADIUS && i >= RADIUS) {
++        *((int *)&inShared[getIndex(threadIdx.x, 0)]) = *((int *)&in[getIndex(i - RADIUS, 0)]);
++    }
++    if (threadIdx.x >= blockDim.x - RADIUS && i < numPixels - RADIUS) {
++        *((int *)&inShared[getIndex(threadIdx.x + 2 * RADIUS, 0)]) = *((int *)&in[getIndex(i + RADIUS, 0)]);
+     }
+     __syncthreads();
+ 
+@@ -59,13 +58,15 @@
+ 
+     for (radius = -RADIUS; radius <= RADIUS; ++radius) {
+         for (channel = 0; channel < NUM_CHANNELS; ++channel) {
+-            outLocal[channel] += (int)inShared[getIndex(threadIdx.x + RADIUS + radius, channel)] * weight[RADIUS + radius];
++            sum[channel] += (int)inShared[getIndex(threadIdx.x + RADIUS + radius, channel)] * weight[RADIUS + radius];
+         }
+     }
+ 
+     for (channel = 0; channel < NUM_CHANNELS; ++channel) {
+-        out[getIndex(i, channel)] = (unsigned char)(outLocal[channel] / denominator);
++        outLocal[channel] = (unsigned char)(sum[channel] / denominator);
+     }
++
++    *((int *)&out[getIndex(i, 0)]) = *((int *)&outLocal);
+ }
+ 
+ static void stencilGpu(unsigned char *in,
